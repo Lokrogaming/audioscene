@@ -61,9 +61,9 @@
           </ul>
           <div class="dock-actions">
             <button class="btn small" id="btn-scene-add" title="Szene hinzufügen">+</button>
-            <button class="btn small" title="Szene entfernen">−</button>
-            <button class="btn small" title="Nach oben">▲</button>
-            <button class="btn small" title="Nach unten">▼</button>
+            <button class="btn small" id="btn-scene-remove" title="Szene entfernen">−</button>
+            <button class="btn small" id="btn-scene-up" title="Nach oben">▲</button>
+            <button class="btn small" id="btn-scene-down" title="Nach unten">▼</button>
           </div>
         </div>
       </div>
@@ -97,10 +97,12 @@
         <div class="dock-body control-btns">
           <button id="btn-record" class="btn primary big">⏺ Aufnahme starten</button>
           <button id="btn-stop" class="btn big" disabled>⏹ Stoppen</button>
+          <button id="btn-monitor" class="btn" title="Master zum Mithören auf die Lautsprecher legen (Vorsicht: Feedback bei Mikrofon)">🔇 Mithören: aus</button>
           <button id="btn-settings" class="btn">⚙ Einstellungen</button>
           <button id="btn-folder" class="btn">📁 Aufnahmen öffnen</button>
           <button id="btn-exit" class="btn danger">✕ Beenden</button>
           <div class="stats">
+            <div>🎬 <span id="stat-scene">Podcast-Mix</span></div>
             <div>💾 <span id="stat-path">…</span></div>
             <div>🎚 <span id="stat-bitrate">192 kbps</span> · <span id="stat-count">0 Quellen</span></div>
           </div>
@@ -112,7 +114,7 @@
   <!-- Statusleiste -->
   <div class="statusbar">
     <span id="status-left">Bereit · Engine: Web Audio + MediaRecorder</span>
-    <span id="status-right">AudioScene v0.1.0</span>
+    <span id="status-right">AudioScene v0.2.0</span>
   </div>
 </div>
 
@@ -151,6 +153,27 @@
     </div>
     <div class="row end">
       <button id="btn-source-close" class="btn">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Quellen-Eigenschaften Modal -->
+<div id="modal-props" class="modal hidden">
+  <div class="modal-box">
+    <h2>Quellen-Eigenschaften</h2>
+    <p class="muted small" id="props-sub">–</p>
+    <label>Name</label>
+    <input id="props-name" type="text" maxlength="60" />
+    <div id="props-device-wrap">
+      <label id="props-device-label">Gerät</label>
+      <select id="props-device"></select>
+      <p class="muted small">Nur bei Eingabegeräten wechselbar. App-/System-Sound nutzt den System-Dialog.</p>
+    </div>
+    <label>Lautstärke (<span id="props-vol-val">100</span> %)</label>
+    <input id="props-vol" type="range" min="0" max="100" value="100" />
+    <div class="row end gap">
+      <button id="btn-props-cancel" class="btn">Abbrechen</button>
+      <button id="btn-props-save" class="btn primary">Übernehmen</button>
     </div>
   </div>
 </div>

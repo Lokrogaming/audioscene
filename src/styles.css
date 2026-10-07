@@ -88,6 +88,13 @@ body {
 .strip .s-type { font-size: 11px; color: var(--muted); }
 .vu { height: 10px; background: #0a0d14; border-radius: 5px; overflow: hidden; border: 1px solid #222839; }
 .vu > div { height: 100%; width: 0%; background: linear-gradient(90deg, var(--green) 0 65%, var(--yellow) 65% 85%, var(--red) 85% 100%); transition: width .05s linear; }
+.vu.clip { border-color: var(--red); box-shadow: 0 0 6px var(--red); }
+.strip.clipped { border-color: var(--red); }
+.strip .peak { font-size: 11px; color: var(--muted); }
+.strip .peak.hot { color: var(--red); font-weight: 700; }
+#btn-monitor.on { border-color: var(--green); color: var(--green); }
+.list li input.rename { width: 100%; background: #0a0d14; color: var(--text); border: 1px solid var(--accent); border-radius: 3px; padding: 3px 6px; }
+#props-vol { width: 100%; accent-color: var(--accent); }
 .strip input[type="range"] { width: 100%; accent-color: var(--accent); }
 .strip .s-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); }
 .mute { cursor: pointer; }

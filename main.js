@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs');
 
 let mainWindow = null;
-let settingsWindow = null;
 
 // ---- Speicherort: automatisch im lokalisierten Musik-Ordner ----
 // app.getPath('music') löst auf Windows automatisch den richtigen
@@ -31,11 +30,13 @@ function getSettingsPath() {
 function loadSettings() {
   const defaults = {
     outputDir: getDefaultOutputDir(),
+    filenameTemplate: 'AudioScene_%Y-%m-%d_%H-%M-%S',
     format: 'webm', // webm | wav
     audioBitrate: 192000, // in bps, UI zeigt kbps
     sampleRate: 48000,
     channels: 2, // 1 = Mono, 2 = Stereo
-    hotkeyRecord: 'F9'
+    hotkeyRecord: 'F9',
+    monitoring: false
   };
   try {
     const p = getSettingsPath();
@@ -58,7 +59,11 @@ function saveSettings(s) {
 }
 
 function createMainWindow() {
-  mainWindow = new BrowserWindow({
+  const iconCandidates = [
+    path.join(__dirname, 'assets', 'logo-icon.svg'),
+    path.join(__dirname, 'assets', 'logo.svg')
+  ];
+  const winOpts = {
     width: 1280,
     height: 760,
     minWidth: 1024,
@@ -70,7 +75,14 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false
     }
-  });
+  };
+  // SVG-Icon nur setzen wenn vorhanden (Windows braucht für Installer später ICO/PNG,
+  // fürs Fenster reicht das hier als Deko – kein harter Fehler wenn es fehlt).
+  try {
+    const hit = iconCandidates.find((p) => fs.existsSync(p));
+    if (hit) winOpts.icon = hit;
+  } catch {}
+  mainWindow = new BrowserWindow(winOpts);
 
   mainWindow.setMenuBarVisibility(false);
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
@@ -161,4 +173,8 @@ ipcMain.handle('app:get-music-path', () => {
     defaultOutput: getDefaultOutputDir(),
     userData: app.getPath('userData')
   };
+});
+
+ipcMain.handle('app:get-version', () => {
+  return app.getVersion();
 });

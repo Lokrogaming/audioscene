@@ -12,18 +12,21 @@
 
 > Doku-Website (GitHub Pages): siehe Ordner [`docs/`](docs/) – dort wird erklärt, wie alles funktioniert. Aktuell bewusst **ohne Download-/Installer-Button**.
 
-## Features (v0.1)
+## Features (v0.2)
 
 - **Szenen + Quellen wie in OBS**
+  - Szenen anlegen, umbenennen (Doppelklick), löschen, sortieren – nur die aktive Szene läuft auf den Master
   - 🖥️ Anwendungs-Audioaufnahme (per System-Dialog mit „Systemaudio teilen“)
-  - 🎤 Eingabegerät (Mikrofon / Headset, wählbar)
-  - 🔈 Ausgabegerät / System-Sound (Loopback, MVP via System-Dialog)
-- **Audio-Mixer** mit Lautstärke-Slider, Mute, Live-VU pro Quelle
-- **Wellenform-Vorschau** (statt Video-Vorschau) + REC-Badge + Timer
-- **⏺ Aufnahme-Button** (Hotkey Standard: `F9`), MediaRecorder im Mix-Bus
+  - 🎤 Eingabegerät (Mikrofon / Headset, wählbar, in Eigenschaften wechselbar)
+  - 🔈 Ausgabegerät / System-Sound (Loopback via System-Dialog)
+- **Quellen-Eigenschaften** (Doppelklick oder ⚙): umbenennen, Gerät wechseln, Lautstärke
+- **Audio-Mixer** mit Lautstärke-Slider, Mute, Live-VU + Peak-Hold und Clip-Warnung pro Quelle
+- **Mithören-Toggle** (Master-Monitoring, standardmäßig aus gegen Feedback)
+- **Wellenform-Vorschau** (statt Video-Vorschau) + REC-Badge + Timer + Live-Dateigröße
+- **⏺ Aufnahme-Button** (Hotkey Standard: `F9`, Eingabefelder ausgenommen), MediaRecorder im Mix-Bus
 - **Einstellungen wie in OBS:**
-  - Ausgabe-Ordner, Dateiname, Format (WebM Opus / WAV)
-  - Sample-Rate (44.1 / 48 kHz), Kanäle (Mono / Stereo)
+  - Ausgabe-Ordner, Dateiname-Vorlage (`%Y %m %d %H %M %S`), Format (WebM Opus / WAV als echtes 16-bit PCM)
+  - Sample-Rate (44.1 / 48 kHz), Kanäle (Mono mit Downmix / Stereo)
   - Bitrate (64–320 kbps)
 - **Automatischer Aufnahme-Ordner auf Windows:**
   - Nutzt `app.getPath('music')` → löst automatisch den lokalisierten Ordner auf
