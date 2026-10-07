@@ -30,6 +30,9 @@ const state = {
   recording: false,
   recStart: 0,
   recTimer: null,
+  recordedMime: '',
+  recordMode: 'native', // native | fallback-webm | transcode
+  targetFormat: 'webm',
   pendingType: null,
   selectedSourceId: null,
   propsId: null,
@@ -42,6 +45,9 @@ function fmtShort(ms) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+const FORMAT_LABEL = { webm: 'WebM (Opus)', ogg: 'OGG (Opus)', mp3: 'MP3', wav: 'WAV (PCM)', m4a: 'M4A (AAC)' };
+const FORMAT_EXT = ['webm', 'ogg', 'mp3', 'wav', 'm4a'];
+function formatLabel(f) { return FORMAT_LABEL[f] || f || 'WebM (Opus)'; }
 function uid(prefix) {
   return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 99999)}`;
 }
@@ -132,9 +138,19 @@ function refreshSettingsUI() {
   $('set-bitrate').value = String(state.settings.audioBitrate || 192000);
   $('set-hotkey').value = state.settings.hotkey || state.settings.hotkeyRecord || 'F9';
   $('stat-path').textContent = state.settings.outputDir || '–';
-  $('stat-bitrate').textContent = `${Math.round((state.settings.audioBitrate || 192000) / 1000)} kbps`;
+  const fmt = FORMAT_EXT.includes(state.settings.format) ? state.settings.format : 'webm';
+  const kbps = Math.round((state.settings.audioBitrate || 192000) / 1000);
+  $('stat-bitrate').textContent = fmt === 'wav' ? 'PCM (verlustfrei)' : `${kbps} kbps`;
   $('status-format').textContent =
-    `Format: ${state.settings.format} · ${Math.round(state.settings.audioBitrate / 1000)} kbps · ${(state.settings.sampleRate / 1000).toFixed(1)} kHz · ${state.settings.channels === 1 ? 'Mono' : 'Stereo'}`;
+    `Format: ${formatLabel(fmt)}${fmt === 'wav' ? '' : ` · ${kbps} kbps`} · ${(state.settings.sampleRate / 1000).toFixed(1)} kHz · ${state.settings.channels === 1 ? 'Mono' : 'Stereo'}`;
+  const hint = $('bitrate-hint');
+  if (hint) {
+    hint.textContent =
+      fmt === 'wav' ? 'WAV ist unkomprimiert – die Bitrate wird ignoriert (Datei wird groß).' :
+      fmt === 'mp3' ? 'MP3 wird nach Stop aus der Aufnahme kodiert (dauert ein paar Sekunden).' :
+      fmt === 'm4a' ? 'M4A nutzt den System-Encoder – falls nicht unterstützt, wird WebM gespeichert.' :
+      'Opus-Bitrate gilt direkt für die Aufnahme.';
+  }
 }
 
 async function saveSettingsFromUI() {
@@ -538,7 +554,7 @@ async function switchMicDevice(s, deviceId) {
 }
 
 // ---------- Aufnahme ----------
-function buildFilename() {
+function buildFilename(forceExt) {
   const now = new Date();
   const p = (n) => String(n).padStart(2, '0');
   const tpl = state.settings.filenameTemplate || 'AudioScene_%Y-%m-%d_%H-%M-%S';
@@ -549,8 +565,9 @@ function buildFilename() {
     .replaceAll('%H', p(now.getHours()))
     .replaceAll('%M', p(now.getMinutes()))
     .replaceAll('%S', p(now.getSeconds()));
-  const clean = stamp.replace(/[<>:"/\\|?*]/g, '_');
-  const ext = state.settings.format === 'wav' ? 'wav' : 'webm';
+  const clean = stamp.replace(/[<>:\"/\\|?*]/g, '_');
+  let ext = forceExt || state.settings.format || 'webm';
+  if (!FORMAT_EXT.includes(ext)) ext = 'webm';
   return `${clean || 'AudioScene_Aufnahme'}.${ext}`;
 }
 
@@ -565,15 +582,47 @@ async function startRecording() {
   if (mine.every((s) => s.muted)) {
     if (!confirm('Alle Quellen dieser Szene sind stumm – trotzdem aufnehmen (Stille)?')) return;
   }
-  const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm'];
+  // Zielformat → Aufnahme-Strategie:
+  // webm/ogg/m4a nativ per MediaRecorder, wav/mp3 als WebM mitschneiden + danach wandeln.
+  const target = FORMAT_EXT.includes(state.settings.format) ? state.settings.format : 'webm';
+  const NATIVE_MIMES = {
+    webm: ['audio/webm;codecs=opus', 'audio/webm'],
+    ogg: ['audio/ogg;codecs=opus', 'audio/ogg'],
+    m4a: ['audio/mp4;codecs=mp4a', 'audio/aac', 'audio/mp4'],
+  };
+  const supported = (m) => { try { return window.MediaRecorder && MediaRecorder.isTypeSupported(m); } catch { return false; } };
   let mime = '';
-  for (const c of mimeCandidates) {
-    if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) { mime = c; break; }
+  let recordMode = 'native';
+  if (target === 'wav' || target === 'mp3') {
+    for (const c of ['audio/webm;codecs=opus', 'audio/webm']) {
+      if (supported(c)) { mime = c; break; }
+    }
+    recordMode = 'transcode';
+  } else {
+    for (const c of NATIVE_MIMES[target] || []) {
+      if (supported(c)) { mime = c; break; }
+    }
+    if (!mime) {
+      // Ziel-Container nicht unterstützt → WebM als Fallback, Hinweis beim Speichern
+      for (const c of ['audio/webm;codecs=opus', 'audio/webm']) {
+        if (supported(c)) { mime = c; break; }
+      }
+      recordMode = 'fallback-webm';
+    }
   }
   if (!mime) {
-    alert('Dieser Build unterstützt kein WebM-Recording (MediaRecorder fehlt).');
+    alert('Dieser Build unterstützt kein Audio-Recording (MediaRecorder fehlt).');
     return;
   }
+  if (target === 'mp3' && (typeof lamejs === 'undefined' || !lamejs.Mp3Encoder)) {
+    alert('MP3-Encoder (src/vendor/lame.min.js) wurde nicht geladen. Stelle sicher, dass die Datei existiert – es wird WebM gespeichert.');
+    state.settings.format = 'webm';
+    refreshSettingsUI();
+    return;
+  }
+  state.recordedMime = mime;
+  state.recordMode = recordMode;
+  state.targetFormat = target;
   const opts = { mimeType: mime };
   if (state.settings.audioBitrate) opts.audioBitsPerSecond = state.settings.audioBitrate;
 
@@ -602,14 +651,17 @@ async function startRecording() {
   $('btn-stop').disabled = false;
   $('rec-badge').classList.remove('hidden');
   const sc = activeScene();
-  $('status-left').textContent = `Aufnahme läuft… („${sc ? sc.name : '–'}“, ${mime}, ${Math.round(state.settings.audioBitrate / 1000)} kbps)`;
+  const kbpsNow = Math.round((state.settings.audioBitrate || 192000) / 1000);
+  const modeNote = recordMode === 'transcode' ? ` → wird zu ${target.toUpperCase()} gewandelt`
+    : recordMode === 'fallback-webm' ? ` (Ziel ${target.toUpperCase()} nicht unterstützt → WebM)` : '';
+  $('status-left').textContent = `Aufnahme läuft… („${sc ? sc.name : '–'}“, Ziel: ${formatLabel(target)}, ${mime}${target === 'wav' ? '' : `, ${kbpsNow} kbps`}${modeNote})`;
 
   state.recTimer = setInterval(() => {
     const el = Date.now() - state.recStart;
     $('rec-time').textContent = fmtShort(el);
     $('clock').textContent = new Date().toLocaleTimeString('de-DE');
     $('status-left').textContent =
-      `Aufnahme läuft… (${fmtShort(el)} · ${(state.recBytes / 1024 / 1024).toFixed(1)} MB${state.settings.format === 'wav' ? ' → wird zu WAV gewandelt' : ''})`;
+      `Aufnahme läuft… (${fmtShort(el)} · ${(state.recBytes / 1024 / 1024).toFixed(1)} MB${recordMode === 'transcode' ? ` → wird zu ${target.toUpperCase()} gewandelt` : ''})`;
   }, 500);
 }
 
@@ -628,28 +680,43 @@ function stopRecording() {
 
 async function saveRecording() {
   let blob = new Blob(state.chunks, { type: state.recorder.mimeType || 'audio/webm' });
-  let filename = buildFilename();
-  const wantWav = state.settings.format === 'wav';
-  if (wantWav) {
-    $('status-left').textContent = `Wandle zu WAV (${(blob.size / 1024 / 1024).toFixed(2)} MB WebM)…`;
+  const target = state.targetFormat || state.settings.format || 'webm';
+  const mode = state.recordMode || 'native';
+  let ext = extFromMime(state.recordedMime);
+
+  if ((target === 'wav' || target === 'mp3') && mode === 'transcode') {
+    $('status-left').textContent = `Wandle zu ${target.toUpperCase()} (${(blob.size / 1024 / 1024).toFixed(2)} MB WebM)…`;
     try {
-      blob = await convertToWavBlob(blob, state.settings.channels === 1 ? 1 : 2);
-      filename = filename.replace(/\.webm$/i, '.wav');
+      const pcm = await decodeToBuffer(blob);
+      if (target === 'wav') {
+        blob = encodeWavBlob(pcm);
+      } else {
+        const kbps = Math.max(32, Math.min(320, Math.round((state.settings.audioBitrate || 192000) / 1000)));
+        blob = encodeMp3Blob(pcm, kbps);
+      }
+      ext = target;
     } catch (e) {
-      console.warn('WAV-Wandlung fehlgeschlagen, speichere WebM:', e);
-      $('status-left').textContent = 'WAV-Wandlung fehlgeschlagen – speichere WebM.';
-      filename = filename.replace(/\.wav$/i, '.webm');
+      console.warn(`${target.toUpperCase()}-Wandlung fehlgeschlagen, speichere WebM:`, e);
+      $('status-left').textContent = `${target.toUpperCase()}-Wandlung fehlgeschlagen – speichere WebM.`;
+      ext = 'webm';
     }
+  } else if (mode === 'fallback-webm' || !FORMAT_EXT.includes(target)) {
+    // Ziel-Container wurde nicht unterstützt → das tatsächlich Aufgenommene speichern
+    ext = extFromMime(state.recordedMime);
+    if (target !== ext) {
+      $('status-left').textContent = `${target.toUpperCase()} wird hier nicht unterstützt – speichere ${ext.toUpperCase()} stattdessen.`;
+    }
+  } else {
+    ext = target;
   }
-  $('status-left').textContent = `Aufnahme beendet (${(blob.size / 1024 / 1024).toFixed(2)} MB) – speichere…`;
+
+  const filename = buildFilename(ext);
+  $('status-left').textContent = `Aufnahme beendet (${(blob.size / 1024 / 1024).toFixed(2)} MB ${ext.toUpperCase()}) – speichere…`;
 
   if (window.audioScene) {
-    const isWav = /\.wav$/i.test(filename);
     const filePath = await window.audioScene.saveFileDialog({
       filename,
-      filters: isWav
-        ? [{ name: 'WAV Audio', extensions: ['wav'] }, { name: 'WebM Audio', extensions: ['webm'] }]
-        : [{ name: 'WebM Audio', extensions: ['webm'] }, { name: 'Alle Dateien', extensions: ['*'] }],
+      filters: filtersForExt(ext),
     });
     if (!filePath) {
       $('status-left').textContent = 'Speichern abgebrochen – Aufnahme verworfen.';
@@ -673,27 +740,78 @@ async function saveRecording() {
   }
 }
 
-// WebM-Blob → AudioBuffer → 16-bit PCM WAV (Mono-Downmix optional)
-async function convertToWavBlob(webmBlob, channels) {
+// WebM-Mitschnitt → PCM-AudioBuffer in Ziel-Samplerate/Kanälen (für WAV/MP3)
+async function decodeToBuffer(webmBlob) {
   ensureCtx();
   const ab = await webmBlob.arrayBuffer();
-  const audioBuf = await state.audioCtx.decodeAudioData(ab.slice(0));
-  const ch = channels === 1 ? 1 : Math.min(2, audioBuf.numberOfChannels);
-  const len = audioBuf.length;
-  const sr = audioBuf.sampleRate;
-  const data = [];
-  if (ch === 1) {
-    const tmp = new Float32Array(len);
-    for (let c = 0; c < audioBuf.numberOfChannels; c++) {
-      const d = audioBuf.getChannelData(c);
-      for (let i = 0; i < len; i++) tmp[i] += d[i] / audioBuf.numberOfChannels;
-    }
-    data.push(tmp);
-  } else {
-    for (let c = 0; c < ch; c++) data.push(audioBuf.getChannelData(c));
+  const raw = await state.audioCtx.decodeAudioData(ab.slice(0));
+  const rate = state.settings.sampleRate || raw.sampleRate;
+  const ch = state.settings.channels === 1 ? 1 : Math.min(2, raw.numberOfChannels);
+  if (raw.sampleRate === rate && raw.numberOfChannels === ch) return raw;
+  // Resamplen / Downmix über Offline-Kontext (Mono = automatischer Downmix)
+  const off = new OfflineAudioContext(ch, Math.max(1, Math.ceil(raw.duration * rate)), rate);
+  const src = off.createBufferSource();
+  src.buffer = raw;
+  src.connect(off.destination);
+  src.start(0);
+  return await off.startRendering();
+}
+
+function extFromMime(mime) {
+  mime = String(mime || '');
+  if (mime.includes('ogg')) return 'ogg';
+  if (mime.includes('mp4') || mime.includes('aac') || mime.includes('m4a')) return 'm4a';
+  return 'webm';
+}
+
+function filtersForExt(ext) {
+  const map = {
+    webm: [{ name: 'WebM Audio', extensions: ['webm'] }],
+    ogg: [{ name: 'OGG Audio', extensions: ['ogg'] }, { name: 'WebM Audio', extensions: ['webm'] }],
+    mp3: [{ name: 'MP3 Audio', extensions: ['mp3'] }],
+    wav: [{ name: 'WAV Audio', extensions: ['wav'] }],
+    m4a: [{ name: 'M4A Audio', extensions: ['m4a'] }, { name: 'WebM Audio', extensions: ['webm'] }],
+  };
+  return map[ext] || [{ name: 'Audio', extensions: [ext, 'webm'] }];
+}
+
+function floatTo16(float32) {
+  const out = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
-  const wavBuf = encodeWav(data, sr);
-  return new Blob([wavBuf], { type: 'audio/wav' });
+  return out;
+}
+
+function encodeWavBlob(audioBuf) {
+  const data = [];
+  for (let c = 0; c < audioBuf.numberOfChannels; c++) data.push(audioBuf.getChannelData(c));
+  return new Blob([encodeWav(data, audioBuf.sampleRate)], { type: 'audio/wav' });
+}
+
+// MP3 via lamejs (src/vendor/lame.min.js, CBR). Mono-/Stereo je nach Einstellungen.
+function encodeMp3Blob(audioBuf, kbps) {
+  if (typeof lamejs === 'undefined' || !lamejs.Mp3Encoder) {
+    throw new Error('MP3-Encoder (lamejs) nicht geladen');
+  }
+  const ch = audioBuf.numberOfChannels;
+  const sr = audioBuf.sampleRate;
+  const enc = new lamejs.Mp3Encoder(ch, sr, kbps);
+  const left = floatTo16(audioBuf.getChannelData(0));
+  const right = ch > 1 ? floatTo16(audioBuf.getChannelData(1)) : null;
+  const parts = [];
+  const CHUNK = 1152;
+  for (let i = 0; i < left.length; i += CHUNK) {
+    const l = left.subarray(i, i + CHUNK);
+    let data;
+    if (right) data = enc.encodeBuffer(l, right.subarray(i, i + CHUNK));
+    else data = enc.encodeBuffer(l);
+    if (data && data.length) parts.push(new Uint8Array(data));
+  }
+  const end = enc.flush();
+  if (end && end.length) parts.push(new Uint8Array(end));
+  return new Blob(parts, { type: 'audio/mpeg' });
 }
 
 function encodeWav(channelsData, sampleRate) {

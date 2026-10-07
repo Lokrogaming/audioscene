@@ -25,9 +25,10 @@
 - **Wellenform-Vorschau** (statt Video-Vorschau) + REC-Badge + Timer + Live-Dateigröße
 - **⏺ Aufnahme-Button** (Hotkey Standard: `F9`, Eingabefelder ausgenommen), MediaRecorder im Mix-Bus
 - **Einstellungen wie in OBS:**
-  - Ausgabe-Ordner, Dateiname-Vorlage (`%Y %m %d %H %M %S`), Format (WebM Opus / WAV als echtes 16-bit PCM)
+  - Ausgabe-Ordner, Dateiname-Vorlage (`%Y %m %d %H %M %S`), Standard-Format umschaltbar:
+    WebM (Opus), OGG (Opus), MP3 (via lamejs, `src/vendor`), WAV (echtes 16-bit PCM), M4A (AAC, falls vom System unterstützt)
   - Sample-Rate (44.1 / 48 kHz), Kanäle (Mono mit Downmix / Stereo)
-  - Bitrate (64–320 kbps)
+  - Bitrate (64–320 kbps, gilt für Opus/MP3 – WAV ist unkomprimiert)
 - **Automatischer Aufnahme-Ordner auf Windows:**
   - Nutzt `app.getPath('music')` → löst automatisch den lokalisierten Ordner auf
   - DE: `C:\Users\<du>\Musik\AudioScene` · EN: `...\Music\AudioScene`

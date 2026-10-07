@@ -197,10 +197,13 @@
       <p class="muted small" id="music-info">Musik-Ordner wird automatisch erkannt (DE: „Musik“, EN: „Music“).</p>
       <label>Dateiname-Vorlage</label>
       <input id="set-template" type="text" value="AudioScene_%Y-%m-%d_%H-%M-%S" />
-      <label>Format</label>
+      <label>Format <small>(Standard für neue Aufnahmen)</small></label>
       <select id="set-format">
-        <option value="webm">WebM (Opus) – klein, gut für Sprache/Musik</option>
+        <option value="webm">WebM (Opus) – klein, ideal für Sprache/Musik</option>
+        <option value="ogg">OGG (Opus) – klein, Open Source</option>
+        <option value="mp3">MP3 – läuft überall</option>
         <option value="wav">WAV – unkomprimiert, riesig, verlustfrei</option>
+        <option value="m4a">M4A (AAC) – für Apple/Handy, falls unterstützt</option>
       </select>
     </div>
 
@@ -229,6 +232,7 @@
         <option value="320000">320 kbps – Maximum</option>
       </select>
       <p class="muted small">Höhere Bitrate = größere Datei, bessere Qualität. Wie in OBS unter Ausgabe.</p>
+      <p class="muted small" id="bitrate-hint"></p>
       <label>Aufnahme-Hotkey (Anzeige)</label>
       <input id="set-hotkey" type="text" value="F9" />
     </div>
@@ -240,6 +244,7 @@
   </div>
 </div>
 
+<script src="vendor/lame.min.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>
