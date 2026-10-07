@@ -12,13 +12,19 @@
 
 > Doku-Website (GitHub Pages): siehe Ordner [`docs/`](docs/) – dort wird erklärt, wie alles funktioniert. Aktuell bewusst **ohne Download-/Installer-Button**.
 
-## Features (v0.2)
+## Features (v0.3)
 
-- **Szenen + Quellen wie in OBS**
+- **Menüs wie in OBS:** Datei (Einstellungen…, Aufnahme-Ordner öffnen, Beenden),
+  Ansicht (Docks ein-/ausblenden, Layout zurücksetzen), Werkzeuge (neue Docks adden), Hilfe (Über)
+- **Docks per Drag & Drop** an der Titelleiste umordnen – Reihenfolge, Sichtbarkeit
+  und Extra-Docks werden automatisch gespeichert
+- **Extra-Docks unter Werkzeuge:** Aufnahme-Verlauf, Master-Pegel (mit Clip-LED), Statistik
+- **Szenen + Quellen wie in OBS** (alles wird automatisch gespeichert)
   - Szenen anlegen, umbenennen (Doppelklick), löschen, sortieren – nur die aktive Szene läuft auf den Master
-  - 🖥️ Anwendungs-Audioaufnahme (per System-Dialog mit „Systemaudio teilen“)
-  - 🎤 Eingabegerät (Mikrofon / Headset, wählbar, in Eigenschaften wechselbar)
-  - 🔈 Ausgabegerät / System-Sound (Loopback via System-Dialog)
+  - 🖥️ Anwendungs-Audio: **Fenster-/Bildschirm-Liste mit Icons** (alle aufnehmbaren Prozesse),
+    gezieltes Capture, Fallback auf manuellen System-Dialog
+  - 🎤 Eingabegerät (Mikrofon / Headset, wählbar, in Eigenschaften wechselbar, nach Neustart auto-verbunden)
+  - 🔈 Ausgabegerät / System-Sound (Loopback, offline-Platzhalter nach Neustart → „Fenster erneut wählen“)
 - **Quellen-Eigenschaften** (Doppelklick oder ⚙): umbenennen, Gerät wechseln, Lautstärke
 - **Audio-Mixer** mit Lautstärke-Slider, Mute, Live-VU + Peak-Hold und Clip-Warnung pro Quelle
 - **Mithören-Toggle** (Master-Monitoring, standardmäßig aus gegen Feedback)

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -177,4 +177,30 @@ ipcMain.handle('app:get-music-path', () => {
 
 ipcMain.handle('app:get-version', () => {
   return app.getVersion();
+});
+
+// Aufnehmbare Fenster/Bildschirme für die OBS-artige Quellenauswahl.
+// (Ob ein Fenster wirklich Ton liefert, entscheidet Windows beim Capture;
+// Bildschirme liefern zuverlässig den Loopback.)
+ipcMain.handle('windows:list', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 160, height: 90 },
+      fetchWindowIcons: true,
+    });
+    return sources
+      .filter((s) => s.name && s.name.trim() && !/audioscene/i.test(s.name))
+      .slice(0, 40)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        isScreen: s.id.startsWith('screen:'),
+        icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : null,
+        thumb: s.thumbnail && !s.thumbnail.isEmpty() ? s.thumbnail.toDataURL() : null,
+      }));
+  } catch (e) {
+    console.error('Fensterliste fehlgeschlagen:', e);
+    return [];
+  }
 });

@@ -12,11 +12,38 @@
   <div class="menubar">
     <div class="menu-left">
       <span class="logo"><img src="../assets/logo-icon.svg" alt="AudioScene Logo" /> <b>AudioScene</b> <span class="sub">– OBS für Audio</span></span>
-      <span class="menu-item">Datei</span>
+      <div class="menu-wrap">
+        <span class="menu-item" id="menu-file">Datei</span>
+        <div class="dropdown hidden" id="drop-file">
+          <button id="m-open-settings">⚙ Einstellungen…</button>
+          <button id="m-open-folder">📁 Aufnahme-Ordner öffnen</button>
+          <div class="sep"></div>
+          <button id="m-exit">✕ Beenden</button>
+        </div>
+      </div>
       <span class="menu-item">Bearbeiten</span>
-      <span class="menu-item">Ansicht</span>
-      <span class="menu-item">Werkzeuge</span>
-      <span class="menu-item">Hilfe</span>
+      <div class="menu-wrap">
+        <span class="menu-item" id="menu-view">Ansicht</span>
+        <div class="dropdown hidden" id="drop-view">
+          <div class="drop-head">Docks anzeigen</div>
+          <div id="view-docks"></div>
+          <div class="sep"></div>
+          <button id="view-reset">⟲ Layout zurücksetzen</button>
+        </div>
+      </div>
+      <div class="menu-wrap">
+        <span class="menu-item" id="menu-tools">Werkzeuge</span>
+        <div class="dropdown hidden" id="drop-tools">
+          <div class="drop-head">Dock hinzufügen</div>
+          <div id="tools-docks"></div>
+        </div>
+      </div>
+      <div class="menu-wrap">
+        <span class="menu-item" id="menu-help">Hilfe</span>
+        <div class="dropdown hidden" id="drop-help">
+          <button id="m-about">ℹ Über AudioScene</button>
+        </div>
+      </div>
     </div>
     <div class="menu-right">
       <span id="clock" class="clock">00:00:00</span>
@@ -49,9 +76,9 @@
     </div>
 
     <!-- Bottom Docks wie OBS -->
-    <div class="docks">
+    <div class="docks" id="docks">
       <!-- Szenen -->
-      <div class="dock">
+      <div class="dock" data-dock="scenes">
         <div class="dock-title">Szenen</div>
         <div class="dock-body">
           <ul id="scene-list" class="list">
@@ -69,7 +96,7 @@
       </div>
 
       <!-- Quellen -->
-      <div class="dock grow">
+      <div class="dock grow" data-dock="sources">
         <div class="dock-title">Quellen <span class="title-hint">– wie in OBS: App-Audio & Geräte</span></div>
         <div class="dock-body">
           <ul id="source-list" class="list sources"></ul>
@@ -84,7 +111,7 @@
       </div>
 
       <!-- Mixer -->
-      <div class="dock mixer-dock">
+      <div class="dock mixer-dock" data-dock="mixer">
         <div class="dock-title">Audio-Mixer</div>
         <div class="dock-body mixer" id="mixer">
           <div class="mixer-empty" id="mixer-empty">Keine Quellen.<br />Klicke auf + bei Quellen.</div>
@@ -92,7 +119,7 @@
       </div>
 
       <!-- Steuerung -->
-      <div class="dock controls">
+      <div class="dock controls" data-dock="controls">
         <div class="dock-title">Steuerung</div>
         <div class="dock-body control-btns">
           <button id="btn-record" class="btn primary big">⏺ Aufnahme starten</button>
@@ -151,6 +178,20 @@
       </div>
       <p class="muted small" id="device-hint"></p>
     </div>
+    <div id="window-picker" class="hidden">
+      <div class="row between">
+        <label style="margin:0">Fenster / Bildschirm wählen:</label>
+        <button id="btn-windows-refresh" class="btn small">⟳ Aktualisieren</button>
+      </div>
+      <div id="window-list" class="win-list"><p class="muted small" style="padding:8px">Lade…</p></div>
+      <label>Name der Quelle:</label>
+      <input id="window-name" type="text" placeholder="z. B. Spotify, Spiel" />
+      <div class="row">
+        <button id="btn-window-manual" class="btn" title="Falls deine App hier fehlt">Manuell (System-Dialog)</button>
+        <button id="btn-window-add" class="btn primary">Hinzufügen</button>
+      </div>
+      <p class="muted small">Bildschirme liefern zuverlässig den Systemsound. Bei einzelnen Fenstern entscheidet Windows, ob Ton mitkommt – falls still, nimm „Manuell“.</p>
+    </div>
     <div class="row end">
       <button id="btn-source-close" class="btn">Schließen</button>
     </div>
@@ -172,6 +213,7 @@
     <label>Lautstärke (<span id="props-vol-val">100</span> %)</label>
     <input id="props-vol" type="range" min="0" max="100" value="100" />
     <div class="row end gap">
+      <button id="btn-props-reconnect" class="btn hidden">🪟 Fenster erneut wählen…</button>
       <button id="btn-props-cancel" class="btn">Abbrechen</button>
       <button id="btn-props-save" class="btn primary">Übernehmen</button>
     </div>

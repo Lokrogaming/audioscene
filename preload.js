@@ -9,5 +9,6 @@ contextBridge.exposeInMainWorld('audioScene', {
   saveBuffer: (filePath, buffer) => ipcRenderer.invoke('file:save-buffer', { filePath, buffer }),
   openDir: (dir) => ipcRenderer.invoke('shell:open-dir', dir),
   getPaths: () => ipcRenderer.invoke('app:get-music-path'),
-  getVersion: () => ipcRenderer.invoke('app:get-version')
+  getVersion: () => ipcRenderer.invoke('app:get-version'),
+  listWindows: () => ipcRenderer.invoke('windows:list')
 });
