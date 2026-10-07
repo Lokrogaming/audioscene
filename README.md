@@ -29,7 +29,10 @@
 - **Audio-Mixer** mit Lautstärke-Slider, Mute, Live-VU + Peak-Hold und Clip-Warnung pro Quelle
 - **Mithören-Toggle** (Master-Monitoring, standardmäßig aus gegen Feedback)
 - **Wellenform-Vorschau** (statt Video-Vorschau) + REC-Badge + Timer + Live-Dateigröße
-- **⏺ Aufnahme-Button** (Hotkey Standard: `F9`, Eingabefelder ausgenommen), MediaRecorder im Mix-Bus
+- **⏺ Aufnahme-Button** (Hotkey Standard: `F9`, Eingabefelder ausgenommen)
+  - **Crashfest bei langen Takes:** Chunks werden live auf Platte gestreamt (`.part`),
+    RAM bleibt flach – kein OOM mehr. WAV/MP3 laufen über PCM-Tap direkt encodiert.
+  - Abgebrochene Takes bleiben als `.part` liegen und erscheinen im Verlauf-Dock.
 - **Einstellungen wie in OBS:**
   - Ausgabe-Ordner, Dateiname-Vorlage (`%Y %m %d %H %M %S`), Standard-Format umschaltbar:
     WebM (Opus), OGG (Opus), MP3 (via lamejs, `src/vendor`), WAV (echtes 16-bit PCM), M4A (AAC, falls vom System unterstützt)

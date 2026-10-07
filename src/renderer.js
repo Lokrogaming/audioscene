@@ -29,8 +29,12 @@ const state = {
   monitorNode: null,
   monitoring: false,
   recorder: null,
-  chunks: [],
   recBytes: 0,
+  recSessionId: null,
+  recQueue: null,
+  memChunks: null, // nur Browser-Fallback ohne IPC
+  pcm: null, // {sessionId, ext, node, mute, encoder, channels, sampleRate, down}
+  tapModuleLoaded: false,
   recording: false,
   recStart: 0,
   recTimer: null,
@@ -1009,6 +1013,196 @@ async function switchMicDevice(s, deviceId) {
   attachStreamToSource(s, stream);
 }
 
+// PCM-Tap für WAV/MP3: Roh-Samples portionsweise vom Master-Bus abgreifen und
+// direkt auf Platte streamen (konstantes RAM, egal wie lang die Aufnahme).
+// Als Blob-Modul geladen, damit es auch im gepackten asar-Build läuft.
+const PCM_WORKLET_SRC = [
+  'class TapProcessor extends AudioWorkletProcessor {',
+  '  constructor(options) {',
+  '    super();',
+  '    const o = (options && options.processorOptions) || {};',
+  '    this.channels = o.channels === 1 ? 1 : 2;',
+  '    this.block = o.blockSize || 16384;',
+  '    this.buf0 = [];',
+  '    this.buf1 = [];',
+  '    this.len = 0;',
+  '  }',
+  '  process(inputs) {',
+  '    const input = inputs[0];',
+  '    if (!input || !input.length) return true;',
+  '    const L = input[0];',
+  '    const R = input.length > 1 ? input[1] : input[0];',
+  '    if (!L) return true;',
+  '    if (this.channels === 1) {',
+  '      const m = new Float32Array(L.length);',
+  '      for (let i = 0; i < L.length; i++) m[i] = (L[i] + R[i]) * 0.5;',
+  '      this.buf0.push(m);',
+  '    } else {',
+  '      this.buf0.push(L.slice(0));',
+  '      this.buf1.push(R.slice(0));',
+  '    }',
+  '    this.len += L.length;',
+  '    if (this.len >= this.block) {',
+  '      const total = this.len;',
+  '      const out0 = new Float32Array(total);',
+  '      let off = 0;',
+  '      for (let k = 0; k < this.buf0.length; k++) { out0.set(this.buf0[k], off); off += this.buf0[k].length; }',
+  '      const msg = { ch0: out0 };',
+  '      if (this.channels === 2) {',
+  '        const out1 = new Float32Array(total);',
+  '        off = 0;',
+  '        for (let k = 0; k < this.buf1.length; k++) { out1.set(this.buf1[k], off); off += this.buf1[k].length; }',
+  '        msg.ch1 = out1;',
+  '      }',
+  '      this.port.postMessage(msg);',
+  '      this.buf0 = [];',
+  '      this.buf1 = [];',
+  '      this.len = 0;',
+  '    }',
+  '    return true;',
+  '  }',
+  '}',
+  "registerProcessor('audioscene-tap', TapProcessor);",
+  '',
+].join('\n');
+
+let tapModuleUrl = null;
+async function ensureTapModule() {
+  if (state.tapModuleLoaded) return;
+  if (!tapModuleUrl) tapModuleUrl = URL.createObjectURL(new Blob([PCM_WORKLET_SRC], { type: 'application/javascript' }));
+  await state.audioCtx.audioWorklet.addModule(tapModuleUrl);
+  state.tapModuleLoaded = true;
+}
+
+// Append-Jobs der Reihe nach (ein .part-File, Reihenfolge muss stimmen)
+function queueAppend(data) {
+  const sid = state.recSessionId;
+  const job = () => window.audioScene.recAppend(sid, data).then((r) => {
+    if (r && r.ok && typeof r.bytes === 'number') state.recBytes = r.bytes;
+  }).catch(() => {});
+  state.recQueue = (state.recQueue || Promise.resolve()).then(job, job);
+  return state.recQueue;
+}
+
+function interleave16(ch0, ch1) {
+  const n = ch0.length;
+  const out = new Int16Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const a = Math.max(-1, Math.min(1, ch0[i]));
+    const b = Math.max(-1, Math.min(1, ch1[i]));
+    out[i * 2] = a < 0 ? a * 0x8000 : a * 0x7fff;
+    out[i * 2 + 1] = b < 0 ? b * 0x8000 : b * 0x7fff;
+  }
+  return out;
+}
+
+// Falls Hardware >48 kHz liefert (lamejs kann nur bis 48 kHz): simpel halbieren
+function halveRate(ch0, ch1) {
+  const n = Math.floor(ch0.length / 2);
+  const o0 = new Float32Array(n);
+  let o1 = null;
+  if (ch1) o1 = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    o0[i] = (ch0[i * 2] + ch0[i * 2 + 1]) * 0.5;
+    if (o1) o1[i] = (ch1[i * 2] + ch1[i * 2 + 1]) * 0.5;
+  }
+  return { ch0: o0, ch1: o1 };
+}
+
+// Float-Blöcke -> MP3-Frames (inkrementell, Speicher bleibt flach)
+function mp3EncodeChunk(encoder, leftF32, rightF32) {
+  const left = floatTo16(leftF32);
+  const right = rightF32 ? floatTo16(rightF32) : null;
+  const parts = [];
+  for (let i = 0; i < left.length; i += 1152) {
+    const l = left.subarray(i, i + 1152);
+    let data;
+    if (right) data = encoder.encodeBuffer(l, right.subarray(i, i + 1152));
+    else data = encoder.encodeBuffer(l);
+    if (data && data.length) parts.push(data);
+  }
+  return parts;
+}
+
+function concatBytes(pieces) {
+  let total = 0;
+  const views = pieces.map((p) => {
+    const v = p instanceof Uint8Array ? p : new Uint8Array(p.buffer, p.byteOffset, p.length);
+    total += v.length;
+    return v;
+  });
+  const out = new Uint8Array(total);
+  let off = 0;
+  views.forEach((v) => { out.set(v, off); off += v.length; });
+  return out;
+}
+
+async function startPcmTap(target, sessionId) {
+  await ensureTapModule();
+  const ctx = state.audioCtx;
+  const actualRate = ctx.sampleRate;
+  const channels = state.settings.channels === 1 ? 1 : 2;
+  const node = new AudioWorkletNode(ctx, 'audioscene-tap', {
+    numberOfInputs: 1,
+    numberOfOutputs: 0,
+    processorOptions: { channels, blockSize: 16384 },
+  });
+  // Stumm mitziehen, damit der Tap sicher gepullt wird (kein Mithören)
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  node.connect(mute);
+  mute.connect(ctx.destination);
+  let encoder = null;
+  let effRate = actualRate;
+  let down = false;
+  if (target === 'mp3') {
+    if (actualRate > 48000 && actualRate % 2 === 0) {
+      effRate = actualRate / 2;
+      down = true;
+    }
+    const kbps = Math.max(32, Math.min(320, Math.round((state.settings.audioBitrate || 192000) / 1000)));
+    encoder = new lamejs.Mp3Encoder(channels, effRate, kbps);
+  }
+  state.pcm = { sessionId, ext: target, node, mute, encoder, channels, sampleRate: effRate, down };
+  state.masterGain.connect(node);
+  node.port.onmessage = onPcmMessage;
+  return { actualRate, channels };
+}
+
+function onPcmMessage(e) {
+  const pcm = state.pcm;
+  if (!pcm || (!state.recording && !state.stopping)) return;
+  let ch0 = e.data && e.data.ch0;
+  let ch1 = (e.data && e.data.ch1) || null;
+  if (!ch0 || !ch0.length) return;
+  if (pcm.down) {
+    const d = halveRate(ch0, ch1);
+    ch0 = d.ch0;
+    ch1 = d.ch1;
+  }
+  if (pcm.ext === 'wav') {
+    queueAppend(pcm.channels === 1 ? floatTo16(ch0) : interleave16(ch0, ch1 || ch0));
+  } else if (pcm.ext === 'mp3' && pcm.encoder) {
+    const parts = mp3EncodeChunk(pcm.encoder, ch0, pcm.channels === 2 ? (ch1 || ch0) : null);
+    if (parts.length) queueAppend(concatBytes(parts));
+  }
+}
+
+async function stopPcmTap() {
+  const pcm = state.pcm;
+  if (!pcm) return;
+  try { state.masterGain.disconnect(pcm.node); } catch {}
+  try { pcm.node.disconnect(); } catch {}
+  try { pcm.mute.disconnect(); } catch {}
+  try { pcm.node.port.onmessage = null; } catch {}
+  if (pcm.ext === 'mp3' && pcm.encoder) {
+    try {
+      const end = pcm.encoder.flush();
+      if (end && end.length) await queueAppend(new Uint8Array(end.buffer, end.byteOffset, end.length));
+    } catch (err) { console.warn('MP3-Flush fehlgeschlagen:', err); }
+  }
+}
+
 // ---------- Aufnahme ----------
 function buildFilename(forceExt) {
   const now = new Date();
@@ -1077,25 +1271,71 @@ async function startRecording() {
   state.recordedMime = mime;
   state.recordMode = recordMode;
   state.targetFormat = target;
-  const opts = { mimeType: mime };
-  if (state.settings.audioBitrate) opts.audioBitsPerSecond = state.settings.audioBitrate;
-
-  try {
-    state.recorder = new MediaRecorder(state.masterDest.stream, opts);
-  } catch (e) {
-    alert('Recorder konnte nicht gestartet werden: ' + e.message);
-    return;
-  }
-  state.chunks = [];
+  state.recorder = null;
+  state.pcm = null;
+  state.stopping = false;
   state.recBytes = 0;
-  state.recorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) {
-      state.chunks.push(e.data);
-      state.recBytes += e.data.size;
+  state.recQueue = null;
+  state.memChunks = null;
+
+  // WAV/MP3 laufen über den PCM-Tap direkt auf Platte (konstantes RAM),
+  // WebM/OGG/M4A nativ per MediaRecorder mit 1-s Streaming-Chunks.
+  const useTap = target === 'wav' || target === 'mp3';
+  const finalExt = useTap ? target : (recordMode === 'native' ? target : extFromMime(mime));
+  const sessionId = uid('rec');
+  state.recSessionId = sessionId;
+
+  if (window.audioScene) {
+    const begun = await window.audioScene.recBegin({
+      sessionId,
+      ext: finalExt,
+      wav: target === 'wav' ? { sampleRate: state.audioCtx.sampleRate, channels: state.settings.channels === 1 ? 1 : 2 } : null,
+    });
+    if (!begun || !begun.ok) {
+      alert('Aufnahme konnte nicht gestartet werden (Datei): ' + ((begun && begun.error) || 'unbekannt'));
+      state.recSessionId = null;
+      return;
     }
-  };
-  state.recorder.onstop = saveRecording;
-  state.recorder.start(250);
+  }
+
+  let tapInfo = null;
+  if (useTap) {
+    try {
+      tapInfo = await startPcmTap(target, sessionId);
+    } catch (e) {
+      console.warn('PCM-Tap fehlgeschlagen:', e);
+      if (window.audioScene) await window.audioScene.recAbort(sessionId).catch(() => {});
+      alert('Aufnahme-Engine konnte nicht starten: ' + (e.message || e));
+      state.recSessionId = null;
+      return;
+    }
+  } else {
+    const opts = { mimeType: mime };
+    if (state.settings.audioBitrate) opts.audioBitsPerSecond = state.settings.audioBitrate;
+    try {
+      state.recorder = new MediaRecorder(state.masterDest.stream, opts);
+    } catch (e) {
+      if (window.audioScene) await window.audioScene.recAbort(sessionId).catch(() => {});
+      alert('Recorder konnte nicht gestartet werden: ' + e.message);
+      state.recSessionId = null;
+      return;
+    }
+    if (window.audioScene) {
+      state.recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          ev.data.arrayBuffer().then((ab) => queueAppend(new Uint8Array(ab))).catch(() => {});
+        }
+      };
+      state.recorder.start(1000);
+    } else {
+      // Browser-Fallback ohne Streaming (nur zum Testen, nicht crashfest)
+      state.memChunks = [];
+      state.recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) { state.memChunks.push(ev.data); state.recBytes += ev.data.size; }
+      };
+      state.recorder.start(250);
+    }
+  }
 
   state.recording = true;
   state.recStart = Date.now();
@@ -1106,22 +1346,22 @@ async function startRecording() {
   $('rec-badge').classList.remove('hidden');
   const sc = activeScene();
   const kbpsNow = Math.round((state.settings.audioBitrate || 192000) / 1000);
-  const modeNote = recordMode === 'transcode' ? ` → wird zu ${target.toUpperCase()} gewandelt`
+  const modeNote = useTap ? `, PCM-Tap ${(tapInfo.actualRate / 1000).toFixed(1)} kHz direkt auf Platte`
     : recordMode === 'fallback-webm' ? ` (Ziel ${target.toUpperCase()} nicht unterstützt → WebM)` : '';
-  $('status-left').textContent = `Aufnahme läuft… („${sc ? sc.name : '–'}“, Ziel: ${formatLabel(target)}, ${mime}${target === 'wav' ? '' : `, ${kbpsNow} kbps`}${modeNote})`;
+  $('status-left').textContent = `Aufnahme läuft… („${sc ? sc.name : '–'}“, Ziel: ${formatLabel(target)}, ${useTap ? target.toUpperCase() + '-Stream' : mime}${target === 'wav' ? '' : `, ${kbpsNow} kbps`}${modeNote})`;
 
   state.recTimer = setInterval(() => {
     const el = Date.now() - state.recStart;
     setText('rec-time', fmtShort(el));
     setText('clock', new Date().toLocaleTimeString('de-DE'));
     $('status-left').textContent =
-      `Aufnahme läuft… (${fmtShort(el)} · ${(state.recBytes / 1024 / 1024).toFixed(1)} MB${recordMode === 'transcode' ? ` → wird zu ${target.toUpperCase()} gewandelt` : ''})`;
+      `Aufnahme läuft… (${fmtShort(el)} · ${(state.recBytes / 1024 / 1024).toFixed(1)} MB auf Platte)`;
   }, 500);
 }
 
-function stopRecording() {
-  if (!state.recording || !state.recorder) return;
-  try { state.recorder.stop(); } catch {}
+async function stopRecording() {
+  if (!state.recording) return;
+  state.stopping = true; // Tap-Rest noch annehmen, UI sofort zurücksetzen
   clearInterval(state.recTimer);
   state.recording = false;
   $('btn-record').disabled = false;
@@ -1129,104 +1369,105 @@ function stopRecording() {
   $('btn-record').textContent = '⏺ Aufnahme starten';
   $('btn-stop').disabled = true;
   $('rec-badge').classList.add('hidden');
-  $('status-left').textContent = 'Speichere Aufnahme…';
+  $('status-left').textContent = 'Schließe Aufnahme ab (restliche Chunks schreiben)…';
+  try {
+    if (state.pcm) {
+      await stopPcmTap();
+    } else if (state.recorder) {
+      const rec = state.recorder;
+      state.recorder = null;
+      if (!window.audioScene) {
+        try { rec.stop(); } catch {}
+      } else {
+        await new Promise((resolve) => {
+          let done = false;
+          const fin = () => { if (!done) { done = true; resolve(); } };
+          try {
+            rec.onstop = fin;
+            rec.stop();
+          } catch { fin(); }
+          setTimeout(fin, 3000); // hängt nie ewig
+        });
+      }
+    }
+    await finalizeRecording();
+  } catch (e) {
+    console.warn('Stop fehlgeschlagen:', e);
+    await abortRecording();
+  } finally {
+    state.stopping = false;
+  }
 }
 
-async function saveRecording() {
-  let blob = new Blob(state.chunks, { type: state.recorder.mimeType || 'audio/webm' });
-  const target = state.targetFormat || state.settings.format || 'webm';
-  const mode = state.recordMode || 'native';
-  let ext = extFromMime(state.recordedMime);
+async function abortRecording() {
+  const sid = state.recSessionId;
+  state.pcm = null;
+  state.recSessionId = null;
+  state.recorder = null;
+  state.recQueue = null;
+  state.recBytes = 0;
+  if (sid && window.audioScene) await window.audioScene.recAbort(sid).catch(() => {});
+  $('status-left').textContent = 'Aufnahme verworfen.';
+}
 
-  if ((target === 'wav' || target === 'mp3') && mode === 'transcode') {
-    $('status-left').textContent = `Wandle zu ${target.toUpperCase()} (${(blob.size / 1024 / 1024).toFixed(2)} MB WebM)…`;
-    try {
-      const pcm = await decodeToBuffer(blob);
-      if (target === 'wav') {
-        blob = encodeWavBlob(pcm);
-      } else {
-        const kbps = Math.max(32, Math.min(320, Math.round((state.settings.audioBitrate || 192000) / 1000)));
-        blob = encodeMp3Blob(pcm, kbps);
-      }
-      ext = target;
-    } catch (e) {
-      console.warn(`${target.toUpperCase()}-Wandlung fehlgeschlagen, speichere WebM:`, e);
-      $('status-left').textContent = `${target.toUpperCase()}-Wandlung fehlgeschlagen – speichere WebM.`;
-      ext = 'webm';
-    }
-  } else if (mode === 'fallback-webm' || !FORMAT_EXT.includes(target)) {
-    ext = extFromMime(state.recordedMime);
-    if (target !== ext) {
-      $('status-left').textContent = `${target.toUpperCase()} wird hier nicht unterstützt – speichere ${ext.toUpperCase()} stattdessen.`;
-    }
-  } else {
-    ext = target;
-  }
+// Alles lag schon während der Aufnahme auf Platte (.part) – hier nur umbenennen
+// (+ WAV-Header patchen). Kein Riesen-Blob, kein RAM-Spike, keine Crashs.
+async function finalizeRecording() {
+  const sid = state.recSessionId;
+  state.pcm = null;
+  state.recSessionId = null;
+  state.recorder = null;
+  try { await (state.recQueue || Promise.resolve()); } catch {}
+  state.recQueue = null;
 
-  const filename = buildFilename(ext);
-  $('status-left').textContent = `Aufnahme beendet (${(blob.size / 1024 / 1024).toFixed(2)} MB ${ext.toUpperCase()}) – speichere…`;
-
-  if (window.audioScene) {
-    const filePath = await window.audioScene.saveFileDialog({
-      filename,
-      filters: filtersForExt(ext),
-    });
-    if (!filePath) {
-      $('status-left').textContent = 'Speichern abgebrochen – Aufnahme verworfen.';
-      return;
-    }
-    const buf = await blob.arrayBuffer();
-    const res = await window.audioScene.saveBuffer(filePath, Array.from(new Uint8Array(buf)));
-    if (res && res.ok) {
-      $('status-left').textContent = `Gespeichert: ${res.path}`;
-      pushHistory({ name: filename, path: res.path, size: blob.size, ext, time: Date.now() });
-    } else {
-      $('status-left').textContent = `Fehler beim Speichern: ${(res && res.error) || 'unbekannt'}`;
-    }
-  } else {
+  if (!window.audioScene) {
+    // Browser-Fallback: In-Memory-Blob als Download (nicht crashfest, nur zum Testen)
+    const blob = new Blob(state.memChunks || [], { type: 'audio/webm' });
+    state.memChunks = null;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
+    const filename = buildFilename('webm');
     a.href = url;
     a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
+    state.recBytes = 0;
     $('status-left').textContent = `Gespeichert (Download): ${filename}`;
-    pushHistory({ name: filename, path: '', size: blob.size, ext, time: Date.now() });
+    pushHistory({ name: filename, path: '', size: blob.size, ext: 'webm', time: Date.now() });
+    return;
+  }
+  if (!sid) return;
+
+  const target = state.targetFormat || state.settings.format || 'webm';
+  let ext = target;
+  if (target !== 'wav' && target !== 'mp3') {
+    ext = state.recordMode === 'native' ? target : extFromMime(state.recordedMime);
+  }
+  const minBytes = ext === 'wav' ? 48 : 1;
+  if (state.recBytes < minBytes) {
+    await window.audioScene.recAbort(sid).catch(() => {});
+    state.recBytes = 0;
+    $('status-left').textContent = 'Leere Aufnahme verworfen.';
+    return;
+  }
+  const filename = buildFilename(ext);
+  const res = await window.audioScene.recFinalize(sid, filename);
+  state.recBytes = 0;
+  if (res && res.ok) {
+    $('status-left').textContent = `Gespeichert: ${res.path}`;
+    pushHistory({ name: filename, path: res.path, size: res.bytes || 0, ext, time: Date.now() });
+  } else {
+    $('status-left').textContent = `Fehler beim Abschließen: ${(res && res.error) || 'unbekannt'} – .part liegt noch im Ordner.`;
   }
 }
 
-// WebM-Mitschnitt → PCM-AudioBuffer in Ziel-Samplerate/Kanälen (für WAV/MP3)
-async function decodeToBuffer(webmBlob) {
-  ensureCtx();
-  const ab = await webmBlob.arrayBuffer();
-  const raw = await state.audioCtx.decodeAudioData(ab.slice(0));
-  const rate = state.settings.sampleRate || raw.sampleRate;
-  const ch = state.settings.channels === 1 ? 1 : Math.min(2, raw.numberOfChannels);
-  if (raw.sampleRate === rate && raw.numberOfChannels === ch) return raw;
-  const off = new OfflineAudioContext(ch, Math.max(1, Math.ceil(raw.duration * rate)), rate);
-  const src = off.createBufferSource();
-  src.buffer = raw;
-  src.connect(off.destination);
-  src.start(0);
-  return await off.startRendering();
-}
+// (saveRecording entfernt: kein Nach-Wandeln mehr – Streaming schreibt direkt auf Platte)
 
 function extFromMime(mime) {
   mime = String(mime || '');
   if (mime.includes('ogg')) return 'ogg';
   if (mime.includes('mp4') || mime.includes('aac') || mime.includes('m4a')) return 'm4a';
   return 'webm';
-}
-
-function filtersForExt(ext) {
-  const map = {
-    webm: [{ name: 'WebM Audio', extensions: ['webm'] }],
-    ogg: [{ name: 'OGG Audio', extensions: ['ogg'] }, { name: 'WebM Audio', extensions: ['webm'] }],
-    mp3: [{ name: 'MP3 Audio', extensions: ['mp3'] }],
-    wav: [{ name: 'WAV Audio', extensions: ['wav'] }],
-    m4a: [{ name: 'M4A Audio', extensions: ['m4a'] }, { name: 'WebM Audio', extensions: ['webm'] }],
-  };
-  return map[ext] || [{ name: 'Audio', extensions: [ext, 'webm'] }];
 }
 
 function floatTo16(float32) {
@@ -1238,67 +1479,8 @@ function floatTo16(float32) {
   return out;
 }
 
-function encodeWavBlob(audioBuf) {
-  const data = [];
-  for (let c = 0; c < audioBuf.numberOfChannels; c++) data.push(audioBuf.getChannelData(c));
-  return new Blob([encodeWav(data, audioBuf.sampleRate)], { type: 'audio/wav' });
-}
-
-// MP3 via lamejs (src/vendor/lame.min.js, CBR). Mono/Stereo je nach Einstellungen.
-function encodeMp3Blob(audioBuf, kbps) {
-  if (typeof lamejs === 'undefined' || !lamejs.Mp3Encoder) {
-    throw new Error('MP3-Encoder (lamejs) nicht geladen');
-  }
-  const ch = audioBuf.numberOfChannels;
-  const sr = audioBuf.sampleRate;
-  const enc = new lamejs.Mp3Encoder(ch, sr, kbps);
-  const left = floatTo16(audioBuf.getChannelData(0));
-  const right = ch > 1 ? floatTo16(audioBuf.getChannelData(1)) : null;
-  const parts = [];
-  const CHUNK = 1152;
-  for (let i = 0; i < left.length; i += CHUNK) {
-    const l = left.subarray(i, i + CHUNK);
-    let data;
-    if (right) data = enc.encodeBuffer(l, right.subarray(i, i + CHUNK));
-    else data = enc.encodeBuffer(l);
-    if (data && data.length) parts.push(new Uint8Array(data));
-  }
-  const end = enc.flush();
-  if (end && end.length) parts.push(new Uint8Array(end));
-  return new Blob(parts, { type: 'audio/mpeg' });
-}
-
-function encodeWav(channelsData, sampleRate) {
-  const numCh = channelsData.length;
-  const len = channelsData[0].length;
-  const bytesPerSample = 2;
-  const blockAlign = numCh * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + len * blockAlign);
-  const v = new DataView(buffer);
-  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
-  writeStr(0, 'RIFF');
-  v.setUint32(4, 36 + len * blockAlign, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
-  v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true);
-  v.setUint16(22, numCh, true);
-  v.setUint32(24, sampleRate, true);
-  v.setUint32(28, sampleRate * blockAlign, true);
-  v.setUint16(32, blockAlign, true);
-  v.setUint16(34, 16, true);
-  writeStr(36, 'data');
-  v.setUint32(40, len * blockAlign, true);
-  let off = 44;
-  for (let i = 0; i < len; i++) {
-    for (let c = 0; c < numCh; c++) {
-      const s = Math.max(-1, Math.min(1, channelsData[c][i]));
-      v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      off += 2;
-    }
-  }
-  return buffer;
-}
+// (encodeWavBlob/encodeMp3Blob/encodeWav entfernt: WAV-Header schreibt der Main-Prozess,
+// MP3 läuft inkrementell über mp3EncodeChunk – kein Gesamt-Blob mehr nötig)
 
 // ---------- Aufnahme-Verlauf ----------
 function pushHistory(entry) {
@@ -1317,11 +1499,28 @@ function renderHistory() {
   }
   state.history.forEach((h) => {
     const li = document.createElement('li');
-    li.innerHTML = `<span>📼 ${escapeHtml(h.name)}</span><span class="eye">${(h.size / 1024 / 1024).toFixed(1)} MB · ${h.ext.toUpperCase()}</span>`;
+    const tag = h.crashed ? '⚠ abgebrochen' : (h.ext || '').toUpperCase();
+    li.innerHTML = `<span>${h.crashed ? '⚠' : '📼'} ${escapeHtml(h.name)}</span><span class="eye">${(h.size / 1024 / 1024).toFixed(1)} MB · ${tag}</span>`;
     li.title = h.path || h.name;
     li.onclick = async () => { if (window.audioScene) await window.audioScene.openDir(); };
     ul.appendChild(li);
   });
+}
+
+// Abgebrochene Takes (.part) aus früheren Sessions anzeigen – Daten sind nicht weg
+async function loadPartials() {
+  if (!window.audioScene || !window.audioScene.recPartials) return;
+  try {
+    const parts = await window.audioScene.recPartials();
+    parts.forEach((p) => {
+      state.history.push({ name: p.name, path: p.path, size: p.size || 0, ext: 'part', crashed: true, time: p.mtime || Date.now() });
+    });
+    if (parts.length) {
+      renderHistory();
+      updateStatsDock();
+      $('status-left').textContent = `${parts.length} abgebrochene Aufnahme(n) als .part im Ordner gefunden – siehe Verlauf (Werkzeuge → Aufnahme-Verlauf).`;
+    }
+  } catch {}
 }
 
 // ---------- VU + Waveform + Master Loop ----------
@@ -1611,6 +1810,7 @@ function bindEvents() {
   renderMixer();
   setMonitoring(!!state.settings.monitoring);
   initDockDrag();
+  await loadPartials();
   persistState(); // Defaults / wiederhergestelltes Layout sofort sichern
   window.addEventListener('beforeunload', () => persistState());
   requestAnimationFrame(loop);

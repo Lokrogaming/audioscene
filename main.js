@@ -120,8 +120,138 @@ ipcMain.handle('settings:save', (event, next) => {
   return merged;
 });
 
-ipcMain.handle('settings:default-dir', () => {
-  return getDefaultOutputDir();
+// ---- Streaming-Aufnahme: Chunks landen sofort auf Platte statt im RAM ----
+// Lange Takes crashen sonst (OOM im Renderer). Temp-Datei = .part im
+// Aufnahme-Ordner, d. h. selbst bei Crash bleibt der Rest auf der Platte.
+const recSessions = new Map(); // sessionId -> { path, ext, wav: {sampleRate, channels} | null, bytes }
+
+function uniquePath(dest) {
+  if (!fs.existsSync(dest)) return dest;
+  const dir = path.dirname(dest);
+  const ext = path.extname(dest);
+  const base = path.basename(dest, ext);
+  let i = 2;
+  let cand = path.join(dir, `${base} (${i})${ext}`);
+  while (fs.existsSync(cand)) {
+    i += 1;
+    cand = path.join(dir, `${base} (${i})${ext}`);
+  }
+  return cand;
+}
+
+function wavHeader(sampleRate, channels) {
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0);
+  h.writeUInt32LE(0, 4); // RIFF-Größe → beim Finalisieren patchen
+  h.write('WAVE', 8);
+  h.write('fmt ', 12);
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); // PCM
+  h.writeUInt16LE(channels, 22);
+  h.writeUInt32LE(sampleRate, 24);
+  h.writeUInt32LE(sampleRate * channels * 2, 28); // byteRate
+  h.writeUInt16LE(channels * 2, 32); // blockAlign
+  h.writeUInt16LE(16, 34);
+  h.write('data', 36);
+  h.writeUInt32LE(0, 40); // data-Größe → beim Finalisieren patchen
+  return h;
+}
+
+ipcMain.handle('rec:begin', (event, { sessionId, ext, wav }) => {
+  try {
+    const settings = loadSettings();
+    const dir = ensureOutputDir(settings.outputDir);
+    const tmp = path.join(dir, `AudioScene_SESSION_${Date.now()}_${Math.floor(Math.random() * 1e6)}.part`);
+    if (wav) {
+      fs.writeFileSync(tmp, wavHeader(wav.sampleRate, wav.channels));
+      recSessions.set(sessionId, { path: tmp, ext, wav, bytes: 44 });
+    } else {
+      fs.writeFileSync(tmp, Buffer.alloc(0));
+      recSessions.set(sessionId, { path: tmp, ext, wav: null, bytes: 0 });
+    }
+    return { ok: true, path: tmp };
+  } catch (e) {
+    console.error('rec:begin fehlgeschlagen:', e);
+    return { ok: false, error: String(e) };
+  }
+});
+
+ipcMain.handle('rec:append', (event, { sessionId, chunk }) => {
+  const s = recSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'unknown session' };
+  try {
+    const buf = Buffer.from(chunk);
+    if (buf.length === 0) return { ok: true, bytes: s.bytes };
+    fs.appendFileSync(s.path, buf);
+    s.bytes += buf.length;
+    return { ok: true, bytes: s.bytes };
+  } catch (e) {
+    console.error('rec:append fehlgeschlagen:', e);
+    return { ok: false, error: String(e) };
+  }
+});
+
+ipcMain.handle('rec:finalize', (event, { sessionId, filename }) => {
+  const s = recSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'unknown session' };
+  try {
+    if (s.wav) {
+      const dataLen = Math.max(0, s.bytes - 44);
+      const fd = fs.openSync(s.path, 'r+');
+      try {
+        const b4 = Buffer.alloc(4);
+        b4.writeUInt32LE(36 + dataLen, 0);
+        fs.writeSync(fd, b4, 0, 4, 4);
+        const b40 = Buffer.alloc(4);
+        b40.writeUInt32LE(dataLen, 0);
+        fs.writeSync(fd, b40, 0, 4, 40);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+    const settings = loadSettings();
+    const dir = ensureOutputDir(settings.outputDir);
+    const dest = uniquePath(path.join(dir, filename));
+    fs.renameSync(s.path, dest);
+    recSessions.delete(sessionId);
+    return { ok: true, path: dest, bytes: s.bytes };
+  } catch (e) {
+    console.error('rec:finalize fehlgeschlagen:', e);
+    return { ok: false, error: String(e) };
+  }
+});
+
+ipcMain.handle('rec:abort', (event, { sessionId }) => {
+  const s = recSessions.get(sessionId);
+  if (!s) return { ok: true };
+  recSessions.delete(sessionId);
+  try { fs.unlinkSync(s.path); } catch {}
+  return { ok: true };
+});
+
+// Crash-Reste (.part) zum Anzeigen im Verlauf-Dock
+ipcMain.handle('rec:partials', () => {
+  try {
+    const settings = loadSettings();
+    const dir = ensureOutputDir(settings.outputDir);
+    return fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.part'))
+      .map((f) => {
+        const p = path.join(dir, f);
+        try {
+          const st = fs.statSync(p);
+          return { name: f, path: p, size: st.size, mtime: st.mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 20);
+  } catch (e) {
+    console.error('rec:partials fehlgeschlagen:', e);
+    return [];
+  }
 });
 
 ipcMain.handle('dialog:pick-dir', async () => {
@@ -133,29 +263,6 @@ ipcMain.handle('dialog:pick-dir', async () => {
   });
   if (res.canceled || res.filePaths.length === 0) return null;
   return res.filePaths[0];
-});
-
-ipcMain.handle('dialog:save-file', async (event, { filename, filters }) => {
-  const settings = loadSettings();
-  const res = await dialog.showSaveDialog(mainWindow, {
-    title: 'Aufnahme speichern',
-    defaultPath: path.join(settings.outputDir, filename),
-    filters: filters || [{ name: 'Audio', extensions: ['webm', 'wav'] }]
-  });
-  if (res.canceled || !res.filePath) return null;
-  return res.filePath;
-});
-
-ipcMain.handle('file:save-buffer', async (event, { filePath, buffer }) => {
-  try {
-    const dir = path.dirname(filePath);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(filePath, Buffer.from(buffer));
-    return { ok: true, path: filePath };
-  } catch (e) {
-    console.error(e);
-    return { ok: false, error: String(e) };
-  }
 });
 
 ipcMain.handle('shell:open-dir', async (event, dir) => {
