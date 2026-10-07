@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AudioScene – OBS für Audio | So funktioniert's</title>
+<meta name="description" content="AudioScene ist wie OBS, nur für Sound: App-Audio & Geräte als Quellen, Mixer, Aufnahme-Button, Bitrate-Einstellungen. Erklärung auf Deutsch." />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        obs: { bg: '#1b1e27', panel: '#232733', panel2: '#2c3140', border: '#383e52', accent: '#3a6df0', red: '#e5484d', green: '#3dd68c', yellow: '#ffb224', muted: '#8b90a3' }
+      }
+    }
+  }
+}
+</script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+<style>
+  body { background: #1b1e27; }
+  .vu-bar { transition: width .12s linear; }
+  .code { font-family: ui-monospace, Consolas, monospace; }
+  html { scroll-behavior: smooth; }
+  .faq-a { display: none; }
+  .faq.open .faq-a { display: block; }
+  canvas#demoWave { width: 100%; height: 140px; background: #0a0d14; border: 1px solid #383e52; border-radius: 8px; }
+</style>
+</head>
+<body class="text-slate-200 antialiased">
+
+<!-- NAV -->
+<header class="sticky top-0 z-40 bg-obs-panel/95 backdrop-blur border-b border-obs-border">
+  <nav class="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
+    <a href="#top" class="flex items-center gap-2">
+      <span class="text-2xl">🎙️</span>
+      <span class="font-bold text-lg">AudioScene <span class="font-normal text-obs-muted text-sm">– OBS für Audio</span></span>
+      <span class="ml-2 text-xs bg-obs-panel2 border border-obs-border rounded-full px-2 py-0.5 text-obs-muted">v0.1.0 MVP</span>
+    </a>
+    <div class="hidden md:flex gap-5 text-sm">
+      <a href="#was" class="hover:text-white text-slate-300">Was ist das?</a>
+      <a href="#quellen" class="hover:text-white text-slate-300">Quellen</a>
+      <a href="#mixer" class="hover:text-white text-slate-300">Mixer</a>
+      <a href="#aufnahme" class="hover:text-white text-slate-300">Aufnahme</a>
+      <a href="#einstellungen" class="hover:text-white text-slate-300">Einstellungen</a>
+      <a href="#speicherort" class="hover:text-white text-slate-300">Speicherort</a>
+      <a href="#faq" class="hover:text-white text-slate-300">FAQ</a>
+    </div>
+    <button id="burger" class="md:hidden text-xl px-2"><i class="fa-solid fa-bars"></i></button>
+  </nav>
+  <div id="mobileMenu" class="hidden md:hidden px-4 pb-3 flex flex-col gap-2 text-sm border-t border-obs-border pt-2">
+    <a href="#was">Was ist das?</a>
+    <a href="#quellen">Quellen</a>
+    <a href="#mixer">Mixer</a>
+    <a href="#aufnahme">Aufnahme</a>
+    <a href="#einstellungen">Einstellungen</a>
+    <a href="#speicherort">Speicherort</a>
+    <a href="#faq">FAQ</a>
+  </div>
+</header>
+
+<!-- HERO -->
+<section id="top" class="max-w-6xl mx-auto px-4 pt-12 pb-8 grid md:grid-cols-2 gap-8 items-center">
+  <div>
+    <div class="inline-flex items-center gap-2 text-xs bg-obs-panel2 border border-obs-border rounded-full px-3 py-1 mb-4">
+      <span class="w-2 h-2 rounded-full bg-obs-green inline-block"></span>
+      OBS-UI · Nur Audio · Windows
+    </div>
+    <h1 class="text-4xl md:text-5xl font-extrabold leading-tight">OBS –<br />nur für <span class="text-obs-accent">Audio.</span></h1>
+    <p class="mt-4 text-slate-300 leading-relaxed">
+      AudioScene funktioniert wie OBS-Szenen &amp; Quellen, aber statt Video mischst du Sound:
+      <b>Anwendungs-Audio</b> (z.&nbsp;B. Spotify, Browser, Spiel) plus <b>Mikrofon, Headset &amp; System-Sound</b>.
+      Dann ein Klick auf <b>⏺ Aufnahme</b> – fertig. Bitrate, Sample-Rate &amp; Ordner stellst du wie in OBS ein.
+    </p>
+    <div class="mt-6 flex flex-wrap gap-3">
+      <a href="#quellen" class="bg-obs-accent hover:bg-blue-700 text-white font-semibold rounded px-5 py-2.5">So funktioniert's <i class="fa-solid fa-arrow-down ml-1"></i></a>
+      <a href="#demo" class="bg-obs-panel2 hover:bg-slate-700 border border-obs-border rounded px-5 py-2.5">Live-Demo ansehen</a>
+    </div>
+    <p class="mt-4 text-xs text-obs-muted"><i class="fa-solid fa-circle-info mr-1"></i> Hinweis: Diese Seite erklärt nur die Bedienung. Es gibt hier bewusst keinen Installer – v0.1 ist reiner MVP.</p>
+  </div>
+  <div class="bg-obs-panel border border-obs-border rounded-xl overflow-hidden shadow-2xl">
+    <div class="flex justify-between px-3 py-2 text-xs text-obs-muted border-b border-obs-border bg-obs-panel2">
+      <span>VORSCHAU – NUR AUDIO</span><span class="text-obs-green">● Engine bereit</span>
+    </div>
+    <div class="p-3">
+      <canvas id="demoWave"></canvas>
+      <div class="grid grid-cols-3 gap-2 mt-3 text-xs">
+        <div class="bg-black/40 border border-obs-border rounded p-2"><div class="font-bold">🖥️ Spotify</div><div class="vu-bar h-2 mt-1 rounded bg-gradient-to-r from-green-500 via-yellow-400 to-red-500" id="vu1" style="width:20%"></div></div>
+        <div class="bg-black/40 border border-obs-border rounded p-2"><div class="font-bold">🎤 Mikrofon</div><div class="vu-bar h-2 mt-1 rounded bg-gradient-to-r from-green-500 via-yellow-400 to-red-500" id="vu2" style="width:20%"></div></div>
+        <div class="bg-black/40 border border-obs-border rounded p-2"><div class="font-bold">🔈 System</div><div class="vu-bar h-2 mt-1 rounded bg-gradient-to-r from-green-500 via-yellow-400 to-red-500" id="vu3" style="width:20%"></div></div>
+      </div>
+    </div>
+    <div class="flex justify-between px-3 py-2 text-xs text-obs-muted border-t border-obs-border">
+      <span>Szenen: Podcast-Mix · Game+Voice</span><span>⏺ F9 = Aufnahme</span>
+    </div>
+  </div>
+</section>
+
+<!-- TABS -->
+<section id="was" class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-2">Was ist AudioScene?</h2>
+  <p class="text-slate-300 mb-4">Genau wie OBS, nur ohne Videobild. Unten die vier Bausteine – klicke dich durch:</p>
+  <div class="flex gap-2 flex-wrap mb-4" id="tabs">
+    <button data-tab="t-quellen" class="tabbtn bg-obs-accent text-white px-4 py-2 rounded text-sm">1 · Quellen</button>
+    <button data-tab="t-mixer" class="tabbtn bg-obs-panel2 border border-obs-border px-4 py-2 rounded text-sm">2 · Mixer</button>
+    <button data-tab="t-rec" class="tabbtn bg-obs-panel2 border border-obs-border px-4 py-2 rounded text-sm">3 · Aufnahme</button>
+    <button data-tab="t-set" class="tabbtn bg-obs-panel2 border border-obs-border px-4 py-2 rounded text-sm">4 · Einstellungen</button>
+  </div>
+  <div class="bg-obs-panel border border-obs-border rounded-xl p-5 text-sm leading-relaxed">
+    <div id="t-quellen" class="tabpanel">
+      <b>Quellen = alles, was Ton macht.</b> Unten im Dock auf <span class="code bg-black/50 px-1 rounded">+</span> klicken:
+      <ul class="list-disc ml-5 mt-2 space-y-1">
+        <li><b>🖥️ Anwendungs-Audioaufnahme:</b> Nimmt eine App auf. Windows fragt: Fenster wählen + <i>„Systemaudio teilen“</i> anhaken.</li>
+        <li><b>🎤 Eingabegerät:</b> Mikrofon / Headset aus der Liste wählen.</li>
+        <li><b>🔈 Ausgabegerät:</b> Alles, was du hörst (Loopback). MVP nutzt denselben System-Dialog, natives WASAPI-Loopback folgt.</li>
+      </ul>
+    </div>
+    <div id="t-mixer" class="tabpanel hidden">
+      <b>Mixer = Lautstärke pro Quelle.</b> Jede Quelle bekommt einen Fader, Mute-Button und Live-VU (grün/gelb/rot wie in OBS).
+      Alles läuft in einen Master-Bus – genau der wird aufgenommen. Rote VUs = zu laut, runterziehen.
+    </div>
+    <div id="t-rec" class="tabpanel hidden">
+      <b>Aufnahme = ein Button.</b> Rechts in <i>Steuerung</i> auf <b>⏺ Aufnahme starten</b> oder <span class="code bg-black/50 px-1 rounded">F9</span>.
+      Oben erscheint <span class="bg-obs-red text-white px-2 rounded-full text-xs">● REC 00:00</span> + Timer. Stoppen → Speichern-Dialog im Aufnahme-Ordner.
+    </div>
+    <div id="t-set" class="tabpanel hidden">
+      <b>Einstellungen = wie OBS.</b> Unter <i>⚙ Einstellungen</i>: Ausgabe (Ordner, Format WebM/WAV), Audio (48 kHz, Stereo/Mono), Aufnahme (Bitrate 64–320 kbps). Höhere Bitrate = besser, aber größere Datei.
+    </div>
+  </div>
+</section>
+
+<!-- QUELLEN DETAIL -->
+<section id="quellen" class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-4">Schritt 1: Quellen hinzufügen <span class="text-sm font-normal text-obs-muted">– wie in OBS</span></h2>
+  <div class="grid md:grid-cols-3 gap-4">
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-5">
+      <div class="text-3xl mb-2">🖥️</div>
+      <h3 class="font-bold">Anwendungs-Audioaufnahme</h3>
+      <p class="text-sm text-slate-300 mt-1">Für Spotify, YouTube im Browser, Discord, Spiele. So geht's:</p>
+      <ol class="text-sm mt-2 ml-4 list-decimal space-y-1 text-slate-300">
+        <li>Bei <i>Quellen</i> auf <b>+</b> → <b>Anwendungs-Audio</b></li>
+        <li>Namen geben, z. B. „Spotify“</li>
+        <li>Im Windows-Dialog Fenster/Tab wählen</li>
+        <li><b>Wichtig:</b> Haken bei <i>Systemaudio / Tab-Audio teilen</i></li>
+      </ol>
+      <p class="text-xs text-obs-muted mt-2">Video-Track wird automatisch verworfen – es bleibt nur Audio.</p>
+    </div>
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-5">
+      <div class="text-3xl mb-2">🎤</div>
+      <h3 class="font-bold">Eingabegerät (Mikrofon)</h3>
+      <p class="text-sm text-slate-300 mt-1">Headset, USB-Mic, Interface:</p>
+      <ol class="text-sm mt-2 ml-4 list-decimal space-y-1 text-slate-300">
+        <li>Auf <b>+</b> → <b>Eingabegerät</b></li>
+        <li>Gerät aus Dropdown wählen</li>
+        <li>Beim ersten Mal Mic-Erlaubnis bestätigen</li>
+        <li>Im Mixer Pegel prüfen (grün = gut)</li>
+      </ol>
+      <p class="text-xs text-obs-muted mt-2">Tipp: Windows-Sound → Eingabe-Lautstärke auf 80–90 %.</p>
+    </div>
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-5">
+      <div class="text-3xl mb-2">🔈</div>
+      <h3 class="font-bold">Ausgabegerät (System-Sound)</h3>
+      <p class="text-sm text-slate-300 mt-1">Nimmt auf, was aus Lautsprecher/Kopfhörer kommt:</p>
+      <ol class="text-sm mt-2 ml-4 list-decimal space-y-1 text-slate-300">
+        <li>Auf <b>+</b> → <b>Ausgabegerät</b></li>
+        <li>System-Dialog bestätigen</li>
+        <li>Parallel App-Audio vermeiden (doppelt!)</li>
+      </ol>
+      <p class="text-xs text-obs-muted mt-2">Nativ per WASAPI ohne Dialog ist für v0.2 geplant.</p>
+    </div>
+  </div>
+</section>
+
+<!-- MIXER + DEMO -->
+<section id="mixer" class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-4">Schritt 2: Mixer verstehen</h2>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-5 text-sm leading-relaxed">
+      <ul class="space-y-2">
+        <li><b>Fader:</b> Lautstärke je Quelle (0–100 %). Doppelklick = 100 %.</li>
+        <li><b>🔊 / 🔇:</b> Mute pro Quelle. Auge in Quellenliste zeigt Status.</li>
+        <li><b>VU-Meter:</b> <span class="text-obs-green">grün</span> ok, <span class="text-obs-yellow">gelb</span> laut, <span class="text-obs-red">rot</span> übersteuert.</li>
+        <li><b>Wellenform oben:</b> Zeigt den Master. Rot = REC läuft, blau = bereit.</li>
+        <li><b>Reihenfolge:</b> Mit ▲▼ sortieren (nur Optik, kein Einfluss auf Sound).</li>
+      </ul>
+      <div class="mt-4 flex gap-2 items-center">
+        <label class="text-xs">Demo-Lautstärke:</label>
+        <input id="demoGain" type="range" min="0" max="100" value="70" class="w-40 accent-blue-500" />
+        <button id="demoMute" class="text-xs bg-obs-panel2 border border-obs-border rounded px-3 py-1">🔊 Mute testen</button>
+      </div>
+    </div>
+    <div id="demo" class="bg-obs-panel border border-obs-border rounded-xl p-5">
+      <h3 class="font-bold text-sm mb-2">Interaktive Mini-Demo (nur Deko – echte Pegel in der App)</h3>
+      <div class="space-y-2 text-sm" id="demoStrips"></div>
+    </div>
+  </div>
+</section>
+
+<!-- AUFNAHME -->
+<section id="aufnahme" class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-4">Schritt 3: Aufnehmen – ein Button</h2>
+  <div class="bg-obs-panel border border-obs-border rounded-xl p-5 grid md:grid-cols-[1fr_280px] gap-6">
+    <ol class="text-sm space-y-2 list-decimal ml-4">
+      <li>Mind. <b>1 Quelle</b> hinzufügen (sonst meckert die App).</li>
+      <li>Rechts auf <b class="bg-obs-accent text-white px-2 py-0.5 rounded">⏺ Aufnahme starten</b> oder <b>F9</b>.</li>
+      <li>Oben läuft <b>● REC + Timer</b>, Wellenform wird rot.</li>
+      <li>Auf <b>⏹ Stoppen</b> → Speichern-Dialog (Standard: Aufnahme-Ordner).</li>
+      <li>Dateiname z. B. <span class="code bg-black/50 px-1 rounded">AudioScene_2026-10-07_15-30-00.webm</span></li>
+      <li>Mit <b>📁 Aufnahmen öffnen</b> direkt zum Ordner springen.</li>
+    </ol>
+    <div class="bg-black/40 border border-obs-border rounded-lg p-4 text-sm">
+      <div class="font-bold mb-2">Steuerung (wie OBS)</div>
+      <div class="flex flex-col gap-2">
+        <div class="bg-obs-accent text-white text-center rounded py-2 font-bold">⏺ Aufnahme starten</div>
+        <div class="bg-obs-panel2 border border-obs-border text-center rounded py-2">⏹ Stoppen</div>
+        <div class="bg-obs-panel2 border border-obs-border text-center rounded py-2">⚙ Einstellungen</div>
+        <div class="bg-obs-panel2 border border-obs-border text-center rounded py-2">📁 Aufnahmen öffnen</div>
+      </div>
+      <p class="text-xs text-obs-muted mt-2">Hotkey F9 lässt sich in den Einstellungen ändern (Anzeige).</p>
+    </div>
+  </div>
+</section>
+
+<!-- EINSTELLUNGEN -->
+<section id="einstellungen" class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-4">Schritt 4: Einstellungen – Bitrate &amp; Co.</h2>
+  <div class="grid md:grid-cols-3 gap-4 text-sm">
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-5">
+      <h3 class="font-bold mb-2"><i class="fa-solid fa-folder-open mr-1"></i> Ausgabe</h3>
+      <ul class="space-y-1 text-slate-300">
+        <li><b>Ordner:</b> Standard Musik/AudioScene, änderbar via Durchsuchen.</li>
+        <li><b>Format:</b> WebM (Opus, klein) oder WAV (riesig, verlustfrei).</li>
+        <li><b>Dateiname:</b> Vorlage mit Datum/Zeit.</li>
+      </ul>
+    </div>
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-5">
+      <h3 class="font-bold mb-2"><i class="fa-solid fa-wave-square mr-1"></i> Audio</h3>
+      <ul class="space-y-1 text-slate-300">
+        <li><b>48 kHz Stereo</b> = OBS-Standard, passt fast immer.</li>
+        <li><b>44,1 kHz</b> nur für reine CD-/Musik-Projekte.</li>
+        <li><b>Mono</b> halbiert Größe, ideal für Sprache.</li>
+      </ul>
+    </div>
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-5">
+      <h3 class="font-bold mb-2"><i class="fa-solid fa-gauge-high mr-1"></i> Aufnahme (Bitrate)</h3>
+      <table class="w-full text-xs mt-1">
+        <tr class="text-obs-muted"><td>64 kbps</td><td>Sprache, mini</td></tr>
+        <tr><td>128 kbps</td><td>Standard, ok</td></tr>
+        <tr class="text-obs-green font-bold"><td>192 kbps ★</td><td>guter Musik-Mix</td></tr>
+        <tr><td>320 kbps</td><td>max, große Datei</td></tr>
+      </table>
+      <p class="text-xs text-obs-muted mt-2">Faustregel: Podcast 128, Musik 192–256.</p>
+    </div>
+  </div>
+  <div class="mt-4 bg-obs-panel border border-obs-border rounded-xl p-4 text-sm flex flex-col md:flex-row gap-3 items-start md:items-center justify-between">
+    <div><b>Bitraten-Rechner:</b> Wie groß wird die Datei? <span class="text-obs-muted">(Bitrate × Sekunden ÷ 8)</span></div>
+    <div class="flex gap-2 items-center">
+      <select id="calcRate" class="bg-black/50 border border-obs-border rounded px-2 py-1 text-sm">
+        <option value="64000">64 kbps</option><option value="128000" selected>128 kbps</option><option value="192000">192 kbps</option><option value="320000">320 kbps</option>
+      </select>
+      <input id="calcMin" type="number" value="10" min="1" max="600" class="bg-black/50 border border-obs-border rounded px-2 py-1 w-20 text-sm" /> Min
+      <span class="font-bold" id="calcOut">≈ 9,6 MB</span>
+    </div>
+  </div>
+</section>
+
+<!-- SPEICHERORT -->
+<section id="speicherort" class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-4">Speicherort: Warum „Musik“ automatisch geht</h2>
+  <div class="bg-obs-panel border border-obs-border rounded-xl p-5 text-sm leading-relaxed grid md:grid-cols-2 gap-6">
+    <div>
+      <p>Windows heißt je nach Sprache anders: Deutsch <b>„Musik“</b>, Englisch <b>„Music“</b>. AudioScene <b>rät nicht</b>, sondern fragt Windows direkt:</p>
+      <ul class="list-disc ml-5 mt-2 space-y-1">
+        <li>Beim ersten Start: <span class="code bg-black/50 px-1 rounded">app.getPath('music')</span> → echter Musik-Ordner</li>
+        <li>Darin wird <span class="code bg-black/50 px-1 rounded">AudioScene/</span> erstellt</li>
+        <li>Beispiel DE: <span class="code bg-black/50 px-1 rounded">C:\Users\Du\Musik\AudioScene</span></li>
+        <li>Beispiel EN: <span class="code bg-black/50 px-1 rounded">C:\Users\You\Music\AudioScene</span></li>
+        <li>Eigener Pfad jederzeit in Einstellungen änderbar</li>
+      </ul>
+      <button id="copyCode" class="mt-3 text-xs bg-obs-panel2 border border-obs-border rounded px-3 py-1.5 hover:bg-slate-700"><i class="fa-solid fa-copy mr-1"></i> Code-Snippet kopieren</button>
+      <span id="copyOk" class="text-xs text-obs-green ml-2 hidden">kopiert ✓</span>
+    </div>
+<pre class="code text-xs bg-black/60 border border-obs-border rounded-lg p-4 overflow-auto" id="codeBlock">const music = app.getPath('music');
+// DE → C:\Users\Du\Musik
+// EN → C:\Users\You\Music
+const dir = path.join(music, 'AudioScene');
+fs.mkdirSync(dir, { recursive: true });</pre>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-4">FAQ</h2>
+  <div class="space-y-2 text-sm" id="faqList">
+    <div class="faq bg-obs-panel border border-obs-border rounded-lg">
+      <button class="faq-q w-full text-left px-4 py-3 font-bold">Warum höre ich mich nicht selbst? <span class="text-obs-muted">+</span></button>
+      <div class="faq-a px-4 pb-3 text-slate-300">Absicht: Die App nimmt auf, spielt aber nicht live zurück (kein Feedback/Echo). Deine Datei enthält alles. Monitoring folgt in v0.2.</div>
+    </div>
+    <div class="faq bg-obs-panel border border-obs-border rounded-lg">
+      <button class="faq-q w-full text-left px-4 py-3 font-bold">„Kein Audio freigegeben“ – was tun? <span class="text-obs-muted">+</span></button>
+      <div class="faq-a px-4 pb-3 text-slate-300">Im System-Dialog unbedingt <b>Systemaudio / Tab-Audio teilen</b> anhaken. Ohne Haken kommt nur Video (wird verworfen) und die App warnt.</div>
+    </div>
+    <div class="faq bg-obs-panel border border-obs-border rounded-lg">
+      <button class="faq-q w-full text-left px-4 py-3 font-bold">WebM oder WAV? <span class="text-obs-muted">+</span></button>
+      <div class="faq-a px-4 pb-3 text-slate-300">WebM (Opus) für Alltag: klein, gut. WAV nur wenn du später mastern willst – 10 Min Stereo ≈ 100 MB. MP3/FLAC via FFmpeg ist geplant.</div>
+    </div>
+    <div class="faq bg-obs-panel border border-obs-border rounded-lg">
+      <button class="faq-q w-full text-left px-4 py-3 font-bold">Wo sind meine Aufnahmen? <span class="text-obs-muted">+</span></button>
+      <div class="faq-a px-4 pb-3 text-slate-300">Standard: Musik/AudioScene (DE: Musik, EN: Music). In der App auf <b>📁 Aufnahmen öffnen</b> klicken – geht immer, egal welche Sprache.</div>
+    </div>
+    <div class="faq bg-obs-panel border border-obs-border rounded-lg">
+      <button class="faq-q w-full text-left px-4 py-3 font-bold">Gibt es Filter wie Noise-Gate? <span class="text-obs-muted">+</span></button>
+      <div class="faq-a px-4 pb-3 text-slate-300">Noch nicht in v0.1. Roadmap: Gate, Kompressor, EQ pro Quelle – wie OBS-Filter.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ROADMAP -->
+<section class="max-w-6xl mx-auto px-4 py-8">
+  <h2 class="text-2xl font-bold mb-4">Roadmap</h2>
+  <div class="grid md:grid-cols-4 gap-3 text-sm">
+    <div class="bg-obs-panel border border-obs-green/50 rounded-xl p-4"><div class="text-obs-green font-bold">✓ v0.1 MVP</div><p class="mt-1 text-slate-300">Quellen, Mixer, REC-Button, Bitrate, Auto-Ordner, diese Seite.</p></div>
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-4"><div class="font-bold">→ v0.2 Nativ</div><p class="mt-1 text-slate-300">WASAPI-Loopback pro App, echte Geräteliste, Monitoring.</p></div>
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-4"><div class="font-bold">→ v0.3 Sound</div><p class="mt-1 text-slate-300">MP3/FLAC-Export, Gate/Kompressor/EQ, Szenen-Mixer.</p></div>
+    <div class="bg-obs-panel border border-obs-border rounded-xl p-4"><div class="font-bold">→ v1.0 Release</div><p class="mt-1 text-slate-300">Installer &amp; Auto-Update. Erst dann erscheint hier ein Bezugsweg.</p></div>
+  </div>
+</section>
+
+<footer class="border-t border-obs-border mt-8">
+  <div class="max-w-6xl mx-auto px-4 py-6 text-xs text-obs-muted flex flex-col md:flex-row justify-between gap-2">
+    <span>🎙️ AudioScene v0.1.0 – OBS für Audio · MIT · Gebaut mit Electron + Web Audio</span>
+    <span>Doku: GitHub Pages · Repo: <span class="code">audioscene</span> · Stand: Oktober 2026</span>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

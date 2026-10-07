@@ -1,0 +1,32 @@
+{
+  "name": "audioscene",
+  "version": "0.1.0",
+  "description": "AudioScene – OBS für Audio. Anwendungs-Audio & Geräte als Quellen mischen und aufnehmen.",
+  "main": "main.js",
+  "author": "Lokrogaming",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win portable zip",
+    "pack": "electron-packager . AudioScene --platform=win32 --arch=x64 --out=release"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.lokrogaming.audioscene",
+    "productName": "AudioScene",
+    "win": {
+      "target": ["portable", "zip"]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ]
+  }
+}
