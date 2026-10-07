@@ -10,18 +10,36 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "dist": "electron-builder --win portable zip",
-    "pack": "electron-packager . AudioScene --platform=win32 --arch=x64 --out=release"
+    "icon": "node scripts/make-icon.cjs",
+    "dist": "electron-builder --win nsis portable",
+    "dist:portable": "electron-builder --win portable zip"
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.5"
   },
   "build": {
     "appId": "com.lokrogaming.audioscene",
     "productName": "AudioScene",
+    "copyright": "Copyright © 2026 Lokrogaming",
     "win": {
-      "target": ["portable", "zip"]
+      "icon": "assets/icon.ico",
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AudioScene",
+      "uninstallDisplayName": "AudioScene – OBS für Audio",
+      "artifactName": "${productName} Setup ${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName} ${version} Portable.${ext}"
     },
     "files": [
       "main.js",
