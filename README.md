@@ -1,4 +1,8 @@
-# 🎙️ AudioScene – OBS für Audio
+<p align="center">
+  <img src="assets/logo-icon.svg" width="128" alt="AudioScene Logo" />
+</p>
+
+# AudioScene – OBS für Audio
 
 **AudioScene** ist wie OBS – nur für Sound. Du fügst **Anwendungs-Audio** und **Audiogeräte** als Quellen hinzu, mischst sie im Mixer und nimmst alles mit einem Klick auf.
 

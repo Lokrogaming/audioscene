@@ -29,7 +29,8 @@ body {
   background: var(--bg2); border-bottom: 1px solid var(--border);
   padding: 6px 12px;
 }
-.logo { margin-right: 18px; font-size: 15px; }
+.logo { margin-right: 18px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.logo img { width: 26px; height: 26px; border-radius: 6px; }
 .logo .sub { color: var(--muted); font-weight: 400; font-size: 13px; }
 .menu-item { margin-right: 14px; color: var(--text); opacity: .85; cursor: pointer; }
 .menu-item:hover { color: #fff; }
